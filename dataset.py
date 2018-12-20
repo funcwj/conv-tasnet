@@ -59,7 +59,7 @@ class ChunkSplitter(object):
     Split utterance into small chunks
     """
 
-    def __init__(self, chunk_size, least=24000):
+    def __init__(self, chunk_size, least=16000):
         self.chunk_size = chunk_size
         self.least = least
 
@@ -86,13 +86,13 @@ class ChunkSplitter(object):
             chunks.append(chunk)
         else:
             # random select start point
-            s = random.randint(0, N % self.chunk_size)
+            s = random.randint(0, N % self.least)
             while True:
                 if s + self.chunk_size > N:
                     break
                 chunk = self._make_chunk(eg, s)
                 chunks.append(chunk)
-                s += self.chunk_size
+                s += self.least
         return chunks
 
 

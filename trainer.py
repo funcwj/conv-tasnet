@@ -145,9 +145,10 @@ class Trainer(object):
             "model_state_dict": self.nnet.state_dict(),
             "optim_state_dict": self.optimizer.state_dict()
         }
-        th.save(cpt, os.path.join(self.checkpoint, "last.pt.tar"))
-        if best:
-            th.save(cpt, os.path.join(self.checkpoint, "best.pt.tar"))
+        th.save(
+            cpt,
+            os.path.join(self.checkpoint,
+                         "{0}.pt.tar".format("best" if best else "last")))
 
     def create_optimizer(self, optimizer, kwargs, state=None):
         supported_optimizer = {
@@ -214,27 +215,40 @@ class Trainer(object):
     def run(self, train_loader, dev_loader, num_epochs=50):
         # avoid alloc memory from gpu0
         with th.cuda.device(self.gpuid[0]):
+            stats = dict()
             # check if save is OK
             self.save_checkpoint(best=False)
             best_loss, _, _ = self.eval(dev_loader)
             self.logger.info("START FROM EPOCH {:d}, LOSS = {:.4f}".format(
                 self.cur_epoch, best_loss))
             while self.cur_epoch < num_epochs:
+                stats[
+                    "title"] = "Loss(time/N, lr={:.3e}) - Epoch {:2d}:".format(
+                        self.optimizer.param_groups[0]["lr"],
+                        self.cur_epoch + 1)
                 tr_loss, tr_batch, tr_cost = self.train(train_loader)
-                dv_loss, dv_batch, dv_cost = self.eval(dev_loader)
-                # schedule here
-                self.scheduler.step(dv_loss)
+                stats["tr"] = "train = {:+.4f}({:.2f}s/{:d})".format(
+                    tr_loss, tr_cost, tr_batch)
+                cv_loss, cv_batch, cv_cost = self.eval(dev_loader)
+                stats["cv"] = "dev = {:+.4f}({:.2f}s/{:d})".format(
+                    cv_loss, cv_cost, cv_batch)
+                stats["scheduler"] = ""
+                if cv_loss > best_loss:
+                    stats["scheduler"] = "| no impr, best = {:.4f}".format(
+                        self.scheduler.best)
+                else:
+                    best_loss = cv_loss
+                    self.save_checkpoint(best=True)
                 self.logger.info(
-                    "Loss(time/N) - Epoch {:2d}: train = {:.4f}({:.2f}s/{:d}) |"
-                    " dev = {:.4f}({:.2f}s/{:d})".format(
-                        self.cur_epoch + 1, tr_loss, tr_cost, tr_batch,
-                        dv_loss, dv_cost, dv_batch))
+                    "{title} {tr} | {cv} {scheduler}".format(**stats))
+                # schedule here
+                self.scheduler.step(cv_loss)
                 # flush scheduler info
                 sys.stdout.flush()
                 # save checkpoint
-                self.save_checkpoint(best=(dv_loss < best_loss))
-                best_loss = min(best_loss, dv_loss)
                 self.cur_epoch += 1
+                self.save_checkpoint(best=False)
+
             self.logger.info(
                 "Training for {:d} epoches done!".format(num_epochs))
 
