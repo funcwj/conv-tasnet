@@ -12,6 +12,7 @@ nnet_conf = {
     "P": 3,
     "norm": "BN",
     "num_spks": 2,
+    "non_linear": "relu"
 }
 
 # data configure:
@@ -41,7 +42,7 @@ trainer_conf = {
     "optimizer": "adam",
     "optimizer_kwargs": adam_kwargs,
     "min_lr": 1e-8,
-    "patience": 0,
+    "patience": 3,
     "factor": 0.5,
     "logging_period": 200  # batch number
 }

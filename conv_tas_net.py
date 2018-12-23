@@ -216,8 +216,19 @@ class ConvTasNet(nn.Module):
                  P=3,
                  norm="cLN",
                  num_spks=2,
-                 decoder_conv=True):
+                 decoder_conv=True,
+                 non_linear="relu"):
         super(ConvTasNet, self).__init__()
+        supported_nonlinear = {
+            "relu": F.relu,
+            "sigmoid": th.sigmoid,
+            "softmax": F.softmax
+        }
+        if non_linear not in supported_nonlinear:
+            raise RuntimeError("Unsupported non-linear function: {}",
+                               format(non_linear))
+        self.non_linear_type = non_linear
+        self.non_linear = supported_nonlinear[non_linear]
         # n x S => n x N x T, S = 4s*8000 = 32000
         self.encoder_1d = Conv1D(1, N, L, stride=L // 2, padding=0)
         # keep T not change
@@ -319,7 +330,10 @@ class ConvTasNet(nn.Module):
         # n x 2N x T
         e = th.chunk(self.conv1x1_2(y), self.num_spks, 1)
         # n x N x T
-        m = F.softmax(th.stack(e, dim=0), dim=0)
+        if self.non_linear_type == "softmax":
+            m = self.non_linear(th.stack(e, dim=0), dim=0)
+        else:
+            m = self.non_linear(th.stack(e, dim=0))
         # spks x [n x N x T]
         s = [w * m[n] for n in range(self.num_spks)]
         # spks x n x S
