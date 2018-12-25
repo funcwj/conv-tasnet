@@ -299,5 +299,5 @@ class SiSnrTrainer(Trainer):
         sisnr_mat = th.stack(
             [sisnr_loss(p) for p in permutations(range(num_spks))])
         max_perutt, _ = th.max(sisnr_mat, dim=0)
-        # negative si-snr
+        # si-snr
         return -th.sum(max_perutt) / N

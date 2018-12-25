@@ -175,30 +175,38 @@ class Conv1DBlock(nn.Module):
                  conv_channels=512,
                  kernel_size=3,
                  dilation=1,
-                 norm="cLN"):
+                 norm="cLN",
+                 causal=False):
         super(Conv1DBlock, self).__init__()
         # 1x1 conv
         self.conv1x1 = Conv1D(in_channels, conv_channels, 1)
         self.prelu1 = nn.PReLU()
         self.lnorm1 = build_norm(norm, conv_channels)
+        dconv_pad = (dilation * (kernel_size - 1)) // 2 if not causal else (
+            dilation * (kernel_size - 1))
         # depthwise conv
         self.dconv = nn.Conv1d(
             conv_channels,
             conv_channels,
             kernel_size,
             groups=conv_channels,
-            padding=(dilation * (kernel_size - 1)) // 2,
+            padding=dconv_pad,
             dilation=dilation,
             bias=True)
         self.prelu2 = nn.PReLU()
         self.lnorm2 = build_norm(norm, conv_channels)
         # 1x1 conv cross channel
         self.sconv = nn.Conv1d(conv_channels, in_channels, 1, bias=True)
+        # different padding way
+        self.causal = causal
+        self.dconv_pad = dconv_pad
 
     def forward(self, x):
         y = self.conv1x1(x)
         y = self.lnorm1(self.prelu1(y))
         y = self.dconv(y)
+        if self.causal:
+            y = y[:, :, :-self.dconv_pad]
         y = self.lnorm2(self.prelu2(y))
         y = self.sconv(y)
         x = x + y
@@ -217,7 +225,8 @@ class ConvTasNet(nn.Module):
                  norm="cLN",
                  num_spks=2,
                  decoder_conv=True,
-                 non_linear="relu"):
+                 non_linear="relu",
+                 causal=False):
         super(ConvTasNet, self).__init__()
         supported_nonlinear = {
             "relu": F.relu,
@@ -240,7 +249,13 @@ class ConvTasNet(nn.Module):
         # repeat blocks
         # n x B x T => n x B x T
         self.repeats = self._build_repeats(
-            R, X, in_channels=B, conv_channels=H, kernel_size=P, norm=norm)
+            R,
+            X,
+            in_channels=B,
+            conv_channels=H,
+            kernel_size=P,
+            norm=norm,
+            causal=causal)
         # output 1x1 conv
         # n x B x T => n x N x T
         # NOTE: using ModuleList not python list
@@ -324,8 +339,6 @@ class ConvTasNet(nn.Module):
         # n x N x T
         """
         m = [conv1x1(y) for conv1x1 in self.conv1x1_2]
-        # spks x n x N x T
-        m = F.softmax(th.stack(m, dim=0), dim=0)
         """
         # n x 2N x T
         e = th.chunk(self.conv1x1_2(y), self.num_spks, 1)
@@ -356,7 +369,7 @@ def foo_layernorm():
 
 def foo_conv_tas_net():
     x = th.rand(4, 1000)
-    nnet = ConvTasNet(norm="cLN")
+    nnet = ConvTasNet(norm="cLN", causal=False)
     # print(nnet)
     print("ConvTasNet #param: {:.2f}".format(param(nnet)))
     x = nnet(x)
