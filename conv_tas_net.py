@@ -38,36 +38,6 @@ class ChannelWiseLayerNorm(nn.LayerNorm):
         return x
 
 
-# class ChannelWiseLayerNorm(nn.Module):
-#     """
-#     Channel wise layer normalization
-#     """
-#
-#     def __init__(self, dim, eps=1e-05):
-#         super(ChannelWiseLayerNorm, self).__init__()
-#         self.eps = eps
-#         self.normalized_dim = dim
-#         self.beta = nn.Parameter(th.zeros(dim, 1))
-#         self.gamma = nn.Parameter(th.ones(dim, 1))
-#
-#     def forward(self, x):
-#         """
-#         x: N x C x T
-#         """
-#         if x.dim() != 3:
-#             raise RuntimeError("{} accept 3D tensor as input".format(
-#                 self.__name__))
-#         # N x 1 x T
-#         mean = th.mean(x, 1, keepdim=True)
-#         std = th.std(x, 1, keepdim=True)
-#         # N x T x C
-#         x = self.gamma * (x - mean) / (std + self.eps) + self.beta
-#         return x
-#
-#     def extra_repr(self):
-#         return "{normalized_dim}, eps={eps}".format(**self.__dict__)
-
-
 class GlobalChannelLayerNorm(nn.Module):
     """
     Global channel layer normalization
@@ -224,7 +194,6 @@ class ConvTasNet(nn.Module):
                  P=3,
                  norm="cLN",
                  num_spks=2,
-                 decoder_conv=True,
                  non_linear="relu",
                  causal=False):
         super(ConvTasNet, self).__init__()
@@ -263,16 +232,10 @@ class ConvTasNet(nn.Module):
         #     [Conv1D(B, N, 1) for _ in range(num_spks)])
         # n x B x T => n x 2N x T
         self.conv1x1_2 = Conv1D(B, num_spks * N, 1)
-        self.decode_conv = decoder_conv
-        # using Linear: n x N x T => n x T x N => n x T x L
-        if not decoder_conv:
-            self.decoder_1d_linear = nn.Linear(N, L, bias=True)
         # using ConvTrans1D: n x N x T => n x 1 x To
         # To = (T - 1) * L // 2 + L
-        # more faster(2.5x) using this branch
-        else:
-            self.decoder_1d_convtr = ConvTrans1D(
-                N, 1, kernel_size=L, stride=L // 2, bias=True)
+        self.decoder_1d_convtr = ConvTrans1D(
+            N, 1, kernel_size=L, stride=L // 2, bias=True)
         self.num_spks = num_spks
 
     def _build_blocks(self, num_blocks, **block_kwargs):
@@ -294,33 +257,6 @@ class ConvTasNet(nn.Module):
             for r in range(num_repeats)
         ]
         return nn.Sequential(*repeats)
-
-    def decode(self, s):
-        """
-        s: [tensor, ...] in n x N x T
-        """
-
-        def ola(x):
-            """
-            overlap and add
-            """
-            # x: T x N x L
-            T, N, L = x.shape
-            # shift
-            S = L // 2
-            R = th.zeros(N, (T - 1) * S + L, device=x.device)
-            base = 0
-            for t in range(T):
-                R[:, base:base + L] += x[t]
-                base += S
-            return R
-
-        # n x N x T => T x n x N
-        s = [x.permute(2, 0, 1) for x in s]
-        # T x n x N => T x n x L
-        s = [self.decoder_1d_linear(x) for x in s]
-        # n x S
-        return [ola(x) for x in s]
 
     def forward(self, x):
         if x.dim() >= 3:
@@ -350,8 +286,7 @@ class ConvTasNet(nn.Module):
         # spks x [n x N x T]
         s = [w * m[n] for n in range(self.num_spks)]
         # spks x n x S
-        return [self.decoder_1d_convtr(x, squeeze=True)
-                for x in s] if self.decode_conv else self.decode(s)
+        return [self.decoder_1d_convtr(x, squeeze=True) for x in s]
 
 
 def foo_conv1d_block():

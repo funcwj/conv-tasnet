@@ -2,6 +2,7 @@
 
 from utils import read_wav
 
+
 def parse_scps(scp_path, value_processor=lambda x: x, num_tokens=2):
     """
     Parse kaldi's script(.scp) file
@@ -28,9 +29,10 @@ def parse_scps(scp_path, value_processor=lambda x: x, num_tokens=2):
             scp_dict[key] = value_processor(value)
     return scp_dict
 
+
 class Reader(object):
     """
-        Base class for sequential/random accessing, to be implemented
+        Basic Reader Class
     """
 
     def __init__(self, scp_path, value_processor=lambda x: x):

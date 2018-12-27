@@ -57,6 +57,9 @@ def get_logger(
         format_str="%(asctime)s [%(pathname)s:%(lineno)s - %(levelname)s ] %(message)s",
         date_format="%Y-%m-%d %H:%M:%S",
         file=False):
+    """
+    Get python logger instance
+    """
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     # file or console
@@ -70,6 +73,9 @@ def get_logger(
 
 
 def dump_json(obj, fdir, name):
+    """
+    Dump python object in json
+    """
     if fdir and not os.path.exists(fdir):
         os.makedirs(fdir)
     with open(os.path.join(fdir, name), "w") as f:
@@ -77,6 +83,9 @@ def dump_json(obj, fdir, name):
 
 
 def load_json(fdir, name):
+    """
+    Load json as python object
+    """
     path = os.path.join(fdir, name)
     if not os.path.exists(path):
         raise FileNotFoundError("Could not find json file: {}".format(path))
