@@ -10,16 +10,16 @@ A PyTorch implementation of the [TasNet: Surpassing Ideal Time-Frequency Masking
 
 ### Usage
 
-* training: configure [conf.py](conf.py) and start [train.sh](train.sh)
+* training: configure [conf.py](nnet/conf.py) and start [train.sh](train.sh)
 
 * inference
 ```
-./time_domain_separate.py /path/to/checkpoint --input /path/to/mix.scp --gpu 0 > separate.log 2>&1 &
+./nnet/time_domain_separate.py /path/to/checkpoint --input /path/to/mix.scp --gpu 0 > separate.log 2>&1 &
 ```
 
 * evaluate
 ```
-./compute_si_snr.py /path/to/ref_spk1.scp,/path/to/ref_spk2.scp /path/to/inf_spk1.scp,/path/to/inf_spk2.scp
+./nnet/compute_si_snr.py /path/to/ref_spk1.scp,/path/to/ref_spk2.scp /path/to/inf_spk1.scp,/path/to/inf_spk2.scp
 ```
 
 ### Result (on best configuratures in the paper)
