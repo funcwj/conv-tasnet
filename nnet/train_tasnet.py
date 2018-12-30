@@ -48,7 +48,7 @@ def run(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=
-        "Command to run permutate invariant training, auto configured from pit_config.py",
+        "Command to start ConvTasNet training, configured from conf.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         "--gpus",
