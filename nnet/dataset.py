@@ -5,16 +5,18 @@ import torch as th
 import numpy as np
 
 from audio import WaveReader
+from torch.utils.data.dataloader import default_collate
 
 
-def make_dataloader(shuffle=True,
+def make_dataloader(train=True,
                     data_kwargs=None,
                     chunk_size=32000,
                     batch_size=16,
-                    cache_size=256):
-    perutt_loader = PeruttLoader(shuffle=shuffle, **data_kwargs)
+                    cache_size=32):
+    perutt_loader = PeruttLoader(shuffle=train, **data_kwargs)
     return DataLoader(
         perutt_loader,
+        train=train,
         chunk_size=chunk_size,
         batch_size=batch_size,
         cache_size=cache_size)
@@ -27,30 +29,28 @@ class PeruttLoader(object):
 
     def __init__(self,
                  shuffle=True,
-                 audio_x="",
-                 audio_y=None,
+                 mix_scp="",
+                 ref_scp=None,
                  sample_rate=8000):
-        self.audio_x = WaveReader(audio_x, sample_rate=sample_rate)
-        self.audio_y = [
-            WaveReader(y, sample_rate=sample_rate) for y in audio_y
-        ]
+        self.mix = WaveReader(mix_scp, sample_rate=sample_rate)
+        self.ref = [WaveReader(y, sample_rate=sample_rate) for y in ref_scp]
         self.shuffle = shuffle
 
     def _make_ref(self, key):
-        for reader in self.audio_y:
+        for reader in self.ref:
             if key not in reader:
                 return None
-        return [reader[key] for reader in self.audio_y]
+        return [reader[key] for reader in self.ref]
 
     def __iter__(self):
         if self.shuffle:
-            random.shuffle(self.audio_x.index_keys)
-        for key, mix in self.audio_x:
+            random.shuffle(self.mix.index_keys)
+        for key, mix in self.mix:
             ref = self._make_ref(key)
             if ref is not None:
                 eg = dict()
-                eg["mix"] = mix
-                eg["ref"] = ref
+                eg["mix"] = mix.astype(np.float32)
+                eg["ref"] = [r.astype(np.float32) for r in ref]
                 yield eg
 
 
@@ -59,11 +59,17 @@ class ChunkSplitter(object):
     Split utterance into small chunks
     """
 
-    def __init__(self, chunk_size, least=16000):
+    def __init__(self, chunk_size, train=True, least=16000):
         self.chunk_size = chunk_size
         self.least = least
+        self.train = train
 
     def _make_chunk(self, eg, s):
+        """
+        Make a chunk instance, which contains:
+            "mix": ndarray,
+            "ref": [ndarray...]
+        """
         chunk = dict()
         chunk["mix"] = eg["mix"][s:s + self.chunk_size]
         chunk["ref"] = [ref[s:s + self.chunk_size] for ref in eg["ref"]]
@@ -85,8 +91,8 @@ class ChunkSplitter(object):
             ]
             chunks.append(chunk)
         else:
-            # random select start point
-            s = random.randint(0, N % self.least)
+            # random select start point for training
+            s = random.randint(0, N % self.least) if self.train else 0
             while True:
                 if s + self.chunk_size > N:
                     break
@@ -96,70 +102,59 @@ class ChunkSplitter(object):
         return chunks
 
 
-def round_robin(objs, number):
-    """
-    Split list of objects
-    Return list of object list
-    """
-
-    # at least one
-    size = len(objs) // number
-    if not size:
-        return []
-
-    obj_lists = [[] for _ in range(size)]
-    idx = 0
-    for obj in objs[:size * number]:
-        obj_lists[idx].append(obj)
-        idx = (idx + 1) % size
-    return obj_lists
-
-
 class DataLoader(object):
+    """
+    Online dataloader for chunk-level PIT
+    """
+
     def __init__(self,
                  perutt_loader,
                  chunk_size=32000,
                  batch_size=16,
-                 cache_size=256):
+                 cache_size=16,
+                 train=True):
         self.loader = perutt_loader
-        self.cache_size, self.batch_size = cache_size, batch_size
-        self.splitter = ChunkSplitter(chunk_size)
+        self.cache_size = cache_size * batch_size
+        self.batch_size = batch_size
+        self.splitter = ChunkSplitter(chunk_size, train=train)
 
-    def make_batch(self, egs, force=False):
-        def T(ndarray):
-            return th.tensor(ndarray, dtype=th.float32)
-
-        if not force and len(egs) < self.cache_size:
-            return None
-        if not len(egs):
-            return None
-
-        eg_lists = round_robin(egs, self.batch_size)
-        batch_list = []
-        for eg_list in eg_lists:
-            batch = dict()
-            batch["mix"] = th.stack([T(eg["mix"]) for eg in eg_list])
-            num_spks = len(eg_list[0]["ref"])
-            batch["ref"] = [
-                th.stack([T(eg["ref"][s]) for eg in eg_list])
-                for s in range(num_spks)
-            ]
-            batch_list.append(batch)
-        return batch_list
+    def _fetch_batch(self):
+        while True:
+            if len(self.load_list) >= self.cache_size:
+                break
+            try:
+                eg = next(self.load_iter)
+                cs = self.splitter.split(eg)
+                self.load_list.extend(cs)
+            except StopIteration:
+                self.stop_iter = True
+                break
+        random.shuffle(self.load_list)
+        N = len(self.load_list)
+        blist = []
+        for s in range(0, N - self.batch_size + 1, self.batch_size):
+            batch = default_collate(self.load_list[s:s + self.batch_size])
+            blist.append(batch)
+        # update load_list
+        rn = N % self.batch_size
+        if rn:
+            # add last batch
+            if self.stop_iter and rn >= 4:
+                last = default_collate(self.load_list[-rn:])
+                blist.append(last)
+            else:
+                self.load_list = self.load_list[-rn:]
+        else:
+            self.load_list = []
+        return blist
 
     def __iter__(self):
-        egs = []
-        for eg in self.loader:
-            chunks = self.splitter.split(eg)
-            if chunks is not None:
-                egs.extend(chunks)
-            elists = self.make_batch(egs)
-            if elists is not None:
-                yield from elists
-                # keep remain
-                r = len(egs) % self.batch_size
-                # note if r == 0
-                egs = egs[-r:] if r else []
-        elists = self.make_batch(egs, force=True)
-        if elists is not None:
-            yield from elists
+        # reset flags
+        self.load_iter = iter(self.loader)
+        self.stop_iter = False
+        self.load_list = []
+
+        while not self.stop_iter:
+            bs = self._fetch_batch()
+            for obj in bs:
+                yield obj

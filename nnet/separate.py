@@ -71,13 +71,13 @@ if __name__ == "__main__":
         "--gpu",
         type=int,
         default=-1,
-        help="GPU-id to offload model to, -1 means running on CPU")
+        help="GPU device to offload model to, -1 means running on CPU")
     parser.add_argument(
         "--fs", type=int, default=8000, help="Sample rate for mixture input")
     parser.add_argument(
         "--dump-dir",
         type=str,
-        default="sps_convtas",
+        default="sps_tas",
         help="Directory to dump separated results out")
     args = parser.parse_args()
     run(args)

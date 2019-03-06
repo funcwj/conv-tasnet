@@ -15,50 +15,20 @@ from torch.nn.utils import clip_grad_norm_
 from utils import get_logger
 
 
-def offload_egs(egs, device):
+def load_obj(obj, device):
     """
-    Offload tensor object in egs to cuda device
+    Offload tensor object in obj to cuda device
     """
 
     def cuda(obj):
         return obj.to(device) if isinstance(obj, th.Tensor) else obj
 
-    for key, obj in egs.items():
-        # if tensor object, load to gpu
-        egs[key] = cuda(obj)
-        # if list of tensor
-        if isinstance(obj, list):
-            egs[key] = list(map(cuda, obj))
-    return egs
-
-
-class AverageMeter(object):
-    """
-    A simple average meter
-    """
-
-    def __init__(self):
-        self.val = defaultdict(float)
-        self.cnt = defaultdict(int)
-
-    def reset(self):
-        self.val.clear()
-        self.cnt.clear()
-
-    def add(self, key, value):
-        self.val[key] += value
-        self.cnt[key] += 1
-
-    def value(self, key):
-        if self.cnt[key] == 0:
-            return 0
-        return self.val[key] / self.cnt[key]
-
-    def sum(self, key):
-        return self.val[key]
-
-    def count(self, key):
-        return self.cnt[key]
+    if isinstance(obj, dict):
+        return {key: load_obj(obj[key], device) for key in obj}
+    elif isinstance(obj, list):
+        return [load_obj(val, device) for val in obj]
+    else:
+        return cuda(obj)
 
 
 class SimpleTimer(object):
@@ -76,6 +46,37 @@ class SimpleTimer(object):
         return time.time() - self.start
 
 
+class ProgressReporter(object):
+    """
+    A simple progress reporter
+    """
+
+    def __init__(self, logger, period=100):
+        self.period = period
+        self.logger = logger
+        self.loss = []
+        self.timer = SimpleTimer()
+
+    def add(self, loss):
+        self.loss.append(loss)
+        N = len(self.loss)
+        if not N % self.period:
+            avg = sum(self.loss[-self.period:]) / self.period
+            self.logger.info("Processed {:d} batches"
+                             "(loss = {:.2f})...".format(N, avg))
+
+    def report(self, details=False):
+        N = len(self.loss)
+        if details:
+            sstr = ",".join(map(lambda f: "{:.2f}".format(f), self.loss))
+            self.logger.info("Loss on {:d} batches: {}".format(N, sstr))
+        return {
+            "loss": sum(self.loss) / N,
+            "batches": N,
+            "cost": self.timer.elapsed()
+        }
+
+
 class Trainer(object):
     def __init__(self,
                  nnet,
@@ -88,7 +89,8 @@ class Trainer(object):
                  patience=0,
                  factor=0.5,
                  logging_period=100,
-                 resume=None):
+                 resume=None,
+                 no_impr=6):
         if not th.cuda.is_available():
             raise RuntimeError("CUDA device unavailable...exist")
         if not isinstance(gpuid, tuple):
@@ -104,6 +106,7 @@ class Trainer(object):
         self.clip_norm = clip_norm
         self.logging_period = logging_period
         self.cur_epoch = 0  # zero based
+        self.no_impr = 0
 
         if resume:
             if not os.path.exists(resume):
@@ -174,43 +177,33 @@ class Trainer(object):
 
     def train(self, data_loader):
         self.nnet.train()
-
-        stats = AverageMeter()
-        timer = SimpleTimer()
+        reporter = ProgressReporter(self.logger, period=self.logging_period)
 
         for egs in data_loader:
             # load to gpu
-            egs = offload_egs(egs, self.device)
+            egs = load_obj(egs, self.device)
 
             self.optimizer.zero_grad()
             loss = self.compute_loss(egs)
-
-            stats.add("loss", loss.item())
             loss.backward()
-
-            progress = stats.count("loss")
-            if not progress % self.logging_period:
-                self.logger.info("Processed {:d} batches...".format(progress))
-
             if self.clip_norm:
                 clip_grad_norm_(self.nnet.parameters(), self.clip_norm)
             self.optimizer.step()
 
-        return stats.value("loss"), stats.count("loss"), timer.elapsed()
+            reporter.add(loss.item())
+        return reporter.report()
 
     def eval(self, data_loader):
+        self.logger.info("Set eval mode...")
         self.nnet.eval()
-
-        stats = AverageMeter()
-        timer = SimpleTimer()
+        reporter = ProgressReporter(self.logger, period=self.logging_period)
 
         with th.no_grad():
             for egs in data_loader:
-                egs = offload_egs(egs, self.device)
+                egs = load_obj(egs, self.device)
                 loss = self.compute_loss(egs)
-                stats.add("loss", loss.item())
-
-        return stats.value("loss"), stats.count("loss"), timer.elapsed()
+                reporter.add(loss.item())
+        return reporter.report(details=True)
 
     def run(self, train_loader, dev_loader, num_epochs=50):
         # avoid alloc memory from gpu0
@@ -218,39 +211,48 @@ class Trainer(object):
             stats = dict()
             # check if save is OK
             self.save_checkpoint(best=False)
-            best_loss, _, _ = self.eval(dev_loader)
+            cv = self.eval(dev_loader)
+            best_loss = cv["loss"]
             self.logger.info("START FROM EPOCH {:d}, LOSS = {:.4f}".format(
                 self.cur_epoch, best_loss))
+            no_impr = 0
+            # make sure not inf
+            self.scheduler.best = best_loss
             while self.cur_epoch < num_epochs:
+                cur_lr = self.optimizer.param_groups[0]["lr"]
                 stats[
                     "title"] = "Loss(time/N, lr={:.3e}) - Epoch {:2d}:".format(
-                        self.optimizer.param_groups[0]["lr"],
-                        self.cur_epoch + 1)
-                tr_loss, tr_batch, tr_cost = self.train(train_loader)
-                stats["tr"] = "train = {:+.4f}({:.2f}s/{:d})".format(
-                    tr_loss, tr_cost, tr_batch)
-                cv_loss, cv_batch, cv_cost = self.eval(dev_loader)
-                stats["cv"] = "dev = {:+.4f}({:.2f}s/{:d})".format(
-                    cv_loss, cv_cost, cv_batch)
+                        cur_lr, self.cur_epoch + 1)
+                tr = self.train(train_loader)
+                stats["tr"] = "train = {:+.4f}({:.2f}m/{:d})".format(
+                    tr["loss"], tr["cost"], tr["batches"])
+                cv = self.eval(dev_loader)
+                stats["cv"] = "dev = {:+.4f}({:.2f}m/{:d})".format(
+                    cv["loss"], cv["cost"], cv["batches"])
                 stats["scheduler"] = ""
-                if cv_loss > best_loss:
+                if cv["loss"] > best_loss:
+                    no_impr += 1
                     stats["scheduler"] = "| no impr, best = {:.4f}".format(
                         self.scheduler.best)
                 else:
-                    best_loss = cv_loss
+                    best_loss = cv["loss"]
+                    no_impr = 0
                     self.save_checkpoint(best=True)
                 self.logger.info(
                     "{title} {tr} | {cv} {scheduler}".format(**stats))
                 # schedule here
-                self.scheduler.step(cv_loss)
+                self.scheduler.step(cv["loss"])
                 # flush scheduler info
                 sys.stdout.flush()
                 # save checkpoint
                 self.cur_epoch += 1
-                self.save_checkpoint(best=False)
-
-            self.logger.info(
-                "Training for {:d} epoches done!".format(num_epochs))
+                if no_impr == self.no_impr:
+                    self.logger.info(
+                        "Stop training cause no impr for {:d} epochs".format(
+                            no_impr))
+                    break
+            self.logger.info("Training for {:d}/{:d} epoches done!".format(
+                self.cur_epoch, num_epochs))
 
 
 class SiSnrTrainer(Trainer):

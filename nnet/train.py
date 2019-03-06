@@ -27,19 +27,26 @@ def run(args):
         resume=args.resume,
         **trainer_conf)
 
-    for conf, fname in zip([nnet_conf, trainer_conf],
-                           ["mdl.json", "trainer.json"]):
+    data_conf = {
+        "train": train_data,
+        "dev": dev_data,
+        "chunk_size": chunk_size
+    }
+    for conf, fname in zip([nnet_conf, trainer_conf, data_conf],
+                           ["mdl.json", "trainer.json", "data.json"]):
         dump_json(conf, args.checkpoint, fname)
 
     train_loader = make_dataloader(
-        shuffle=True,
+        train=True,
         data_kwargs=train_data,
         batch_size=args.batch_size,
+        cache_size=args.cache_size,
         chunk_size=chunk_size)
     dev_loader = make_dataloader(
-        shuffle=False,
+        train=False,
         data_kwargs=dev_data,
         batch_size=args.batch_size,
+        cache_size=args.cache_size,
         chunk_size=chunk_size)
 
     trainer.run(train_loader, dev_loader, num_epochs=args.epochs)
@@ -72,6 +79,11 @@ if __name__ == "__main__":
         type=int,
         default=16,
         help="Number of utterances in each batch")
+    parser.add_argument(
+        "--cache-size",
+        type=int,
+        default=16,
+        help="Number of chunks cached in dataloader")
     args = parser.parse_args()
     logger.info("Arguments in command:\n{}".format(pprint.pformat(vars(args))))
 

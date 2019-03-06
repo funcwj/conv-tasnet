@@ -4,17 +4,15 @@ A PyTorch implementation of the [TasNet: Surpassing Ideal Time-Frequency Masking
 
 ### Requirements
 
-* scipy 1.1.0
-* torch 1.0.0
-* numpy 1.14.3
+see [requirements.txt](requirements.txt)
 
 ### Usage
 
-* training: configure [conf.py](nnet/conf.py) and start [train.sh](train.sh)
+* training: configure [conf.py](nnet/conf.py) and run [train.sh](train.sh)
 
 * inference
 ```bash
-./nnet/time_domain_separate.py /path/to/checkpoint --input /path/to/mix.scp --gpu 0 > separate.log 2>&1 &
+./nnet/separate.py /path/to/checkpoint --input /path/to/mix.scp --gpu 0 > separate.log 2>&1 &
 ```
 
 * evaluate
