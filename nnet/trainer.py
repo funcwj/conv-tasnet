@@ -43,7 +43,7 @@ class SimpleTimer(object):
         self.start = time.time()
 
     def elapsed(self):
-        return time.time() - self.start
+        return (time.time() - self.start) / 60
 
 
 class ProgressReporter(object):
@@ -63,7 +63,7 @@ class ProgressReporter(object):
         if not N % self.period:
             avg = sum(self.loss[-self.period:]) / self.period
             self.logger.info("Processed {:d} batches"
-                             "(loss = {:.2f})...".format(N, avg))
+                             "(loss = {:+.2f})...".format(N, avg))
 
     def report(self, details=False):
         N = len(self.loss)
@@ -106,7 +106,7 @@ class Trainer(object):
         self.clip_norm = clip_norm
         self.logging_period = logging_period
         self.cur_epoch = 0  # zero based
-        self.no_impr = 0
+        self.no_impr = no_impr
 
         if resume:
             if not os.path.exists(resume):
@@ -176,6 +176,7 @@ class Trainer(object):
         raise NotImplementedError
 
     def train(self, data_loader):
+        self.logger.info("Set train mode...")
         self.nnet.train()
         reporter = ProgressReporter(self.logger, period=self.logging_period)
 
@@ -219,10 +220,11 @@ class Trainer(object):
             # make sure not inf
             self.scheduler.best = best_loss
             while self.cur_epoch < num_epochs:
+                self.cur_epoch += 1
                 cur_lr = self.optimizer.param_groups[0]["lr"]
                 stats[
                     "title"] = "Loss(time/N, lr={:.3e}) - Epoch {:2d}:".format(
-                        cur_lr, self.cur_epoch + 1)
+                        cur_lr, self.cur_epoch)
                 tr = self.train(train_loader)
                 stats["tr"] = "train = {:+.4f}({:.2f}m/{:d})".format(
                     tr["loss"], tr["cost"], tr["batches"])
@@ -244,8 +246,6 @@ class Trainer(object):
                 self.scheduler.step(cv["loss"])
                 # flush scheduler info
                 sys.stdout.flush()
-                # save checkpoint
-                self.cur_epoch += 1
                 if no_impr == self.no_impr:
                     self.logger.info(
                         "Stop training cause no impr for {:d} epochs".format(

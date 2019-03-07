@@ -79,7 +79,7 @@ class ChunkSplitter(object):
         N = eg["mix"].size
         # too short, throw away
         if N < self.least:
-            return None
+            return []
         chunks = []
         # padding zeros
         if N < self.chunk_size:
@@ -116,7 +116,8 @@ class DataLoader(object):
         self.loader = perutt_loader
         self.cache_size = cache_size * batch_size
         self.batch_size = batch_size
-        self.splitter = ChunkSplitter(chunk_size, train=train)
+        self.splitter = ChunkSplitter(
+            chunk_size, train=train, least=chunk_size // 2)
 
     def _fetch_batch(self):
         while True:
