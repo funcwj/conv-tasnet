@@ -4,9 +4,8 @@ import random
 import torch as th
 import numpy as np
 
-from audio import WaveReader
 from torch.utils.data.dataloader import default_collate
-
+from .audio import WaveReader
 
 def make_dataloader(train=True,
                     data_kwargs=None,

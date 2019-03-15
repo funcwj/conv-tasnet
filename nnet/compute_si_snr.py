@@ -10,8 +10,8 @@ import argparse
 from tqdm import tqdm
 
 from collections import defaultdict
-from metric import si_snr, permute_si_snr
-from audio import WaveReader, parse_scps
+from libs.metric import si_snr, permute_si_snr
+from libs.audio import WaveReader, Reader
 
 
 class SpeakersReader(object):
@@ -38,7 +38,7 @@ class SpeakersReader(object):
 
 class Report(object):
     def __init__(self, spk2gender=None):
-        self.s2g = parse_scps(spk2gender) if spk2gender else None
+        self.s2g = Reader(spk2gender) if spk2gender else None
         self.snr = defaultdict(float)
         self.cnt = defaultdict(int)
 

@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.nn.utils import clip_grad_norm_
 
-from utils import get_logger
+from .utils import get_logger
 
 
 def load_obj(obj, device):
@@ -246,6 +246,8 @@ class Trainer(object):
                 self.scheduler.step(cv["loss"])
                 # flush scheduler info
                 sys.stdout.flush()
+                # save last checkpoint
+                self.save_checkpoint(best=True)
                 if no_impr == self.no_impr:
                     self.logger.info(
                         "Stop training cause no impr for {:d} epochs".format(

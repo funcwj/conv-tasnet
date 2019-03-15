@@ -8,9 +8,10 @@ import argparse
 import torch as th
 import numpy as np
 
-from utils import load_json, get_logger, write_wav
 from conv_tas_net import ConvTasNet
-from audio import WaveReader
+
+from libs.utils import load_json, get_logger
+from libs.audio import WaveReader, write_wav
 
 logger = get_logger(__name__)
 

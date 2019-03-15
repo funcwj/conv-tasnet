@@ -7,10 +7,11 @@ import pprint
 import argparse
 import random
 
+from libs.trainer import SiSnrTrainer
+from libs.dataset import make_dataloader
+from libs.utils import dump_json, get_logger
+
 from conv_tas_net import ConvTasNet
-from trainer import SiSnrTrainer
-from dataset import make_dataloader
-from utils import dump_json, get_logger
 from conf import trainer_conf, nnet_conf, train_data, dev_data, chunk_size
 
 logger = get_logger(__name__)
