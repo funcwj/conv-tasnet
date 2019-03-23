@@ -18,20 +18,22 @@ logger = get_logger(__name__)
 
 class NnetComputer(object):
     def __init__(self, cpt_dir, gpuid):
+        self.device = th.device(
+            "cuda:{}".format(gpuid)) if gpuid >= 0 else th.device("cpu")
+        nnet = self._load_nnet(cpt_dir)
+        self.nnet = nnet.to(self.device) if gpuid >= 0 else nnet
+        # set eval model
+        self.nnet.eval()
+
+    def _load_nnet(self, cpt_dir):
         nnet_conf = load_json(cpt_dir, "mdl.json")
         nnet = ConvTasNet(**nnet_conf)
-
         cpt_fname = os.path.join(cpt_dir, "best.pt.tar")
         cpt = th.load(cpt_fname, map_location="cpu")
         nnet.load_state_dict(cpt["model_state_dict"])
         logger.info("Load checkpoint from {}, epoch {:d}".format(
             cpt_fname, cpt["epoch"]))
-
-        self.device = th.device(
-            "cuda:{}".format(gpuid)) if gpuid >= 0 else th.device("cpu")
-        self.nnet = nnet.to(self.device) if gpuid >= 0 else nnet
-        # set eval model
-        self.nnet.eval()
+        return nnet
 
     def compute(self, samps):
         with th.no_grad():

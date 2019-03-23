@@ -214,7 +214,7 @@ class ConvTasNet(nn.Module):
         # before repeat blocks, always cLN
         self.ln = ChannelWiseLayerNorm(N)
         # n x N x T => n x B x T
-        self.conv1x1_1 = Conv1D(N, B, 1)
+        self.proj = Conv1D(N, B, 1)
         # repeat blocks
         # n x B x T => n x B x T
         self.repeats = self._build_repeats(
@@ -231,10 +231,10 @@ class ConvTasNet(nn.Module):
         # self.conv1x1_2 = th.nn.ModuleList(
         #     [Conv1D(B, N, 1) for _ in range(num_spks)])
         # n x B x T => n x 2N x T
-        self.conv1x1_2 = Conv1D(B, num_spks * N, 1)
+        self.mask = Conv1D(B, num_spks * N, 1)
         # using ConvTrans1D: n x N x T => n x 1 x To
         # To = (T - 1) * L // 2 + L
-        self.decoder_1d_convtr = ConvTrans1D(
+        self.decoder_1d = ConvTrans1D(
             N, 1, kernel_size=L, stride=L // 2, bias=True)
         self.num_spks = num_spks
 
@@ -269,15 +269,11 @@ class ConvTasNet(nn.Module):
         # n x 1 x S => n x N x T
         w = F.relu(self.encoder_1d(x))
         # n x B x T
-        y = self.conv1x1_1(self.ln(w))
+        y = self.proj(self.ln(w))
         # n x B x T
         y = self.repeats(y)
-        # n x N x T
-        """
-        m = [conv1x1(y) for conv1x1 in self.conv1x1_2]
-        """
         # n x 2N x T
-        e = th.chunk(self.conv1x1_2(y), self.num_spks, 1)
+        e = th.chunk(self.mask(y), self.num_spks, 1)
         # n x N x T
         if self.non_linear_type == "softmax":
             m = self.non_linear(th.stack(e, dim=0), dim=0)
@@ -286,7 +282,7 @@ class ConvTasNet(nn.Module):
         # spks x [n x N x T]
         s = [w * m[n] for n in range(self.num_spks)]
         # spks x n x S
-        return [self.decoder_1d_convtr(x, squeeze=True) for x in s]
+        return [self.decoder_1d(x, squeeze=True) for x in s]
 
 
 def foo_conv1d_block():

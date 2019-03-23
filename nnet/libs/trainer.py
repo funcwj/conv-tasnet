@@ -247,7 +247,7 @@ class Trainer(object):
                 # flush scheduler info
                 sys.stdout.flush()
                 # save last checkpoint
-                self.save_checkpoint(best=True)
+                self.save_checkpoint(best=False)
                 if no_impr == self.no_impr:
                     self.logger.info(
                         "Stop training cause no impr for {:d} epochs".format(
