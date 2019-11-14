@@ -1,6 +1,6 @@
 # wujian@2018
 
-import optparse
+import os
 import numpy as np
 import scipy.io.wavfile as wf
 

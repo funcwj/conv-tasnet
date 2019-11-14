@@ -5,59 +5,51 @@ import torch as th
 import numpy as np
 
 from torch.utils.data.dataloader import default_collate
+import torch.utils.data as dat
+
 from .audio import WaveReader
+
 
 def make_dataloader(train=True,
                     data_kwargs=None,
+                    num_workers=4,
                     chunk_size=32000,
-                    batch_size=16,
-                    cache_size=32):
-    perutt_loader = PeruttLoader(shuffle=train, **data_kwargs)
-    return DataLoader(
-        perutt_loader,
-        train=train,
-        chunk_size=chunk_size,
-        batch_size=batch_size,
-        cache_size=cache_size)
+                    batch_size=16):
+    dataset = Dataset(**data_kwargs)
+    return DataLoader(dataset,
+                      train=train,
+                      chunk_size=chunk_size,
+                      batch_size=batch_size,
+                      num_workers=num_workers)
 
 
-class PeruttLoader(object):
+class Dataset(object):
     """
     Per Utterance Loader
     """
-
-    def __init__(self,
-                 shuffle=True,
-                 mix_scp="",
-                 ref_scp=None,
-                 sample_rate=8000):
+    def __init__(self, mix_scp="", ref_scp=None, sample_rate=8000):
         self.mix = WaveReader(mix_scp, sample_rate=sample_rate)
-        self.ref = [WaveReader(y, sample_rate=sample_rate) for y in ref_scp]
-        self.shuffle = shuffle
+        self.ref = [
+            WaveReader(ref, sample_rate=sample_rate) for ref in ref_scp
+        ]
 
-    def _make_ref(self, key):
-        for reader in self.ref:
-            if key not in reader:
-                return None
-        return [reader[key] for reader in self.ref]
+    def __len__(self):
+        return len(self.mix)
 
-    def __iter__(self):
-        if self.shuffle:
-            random.shuffle(self.mix.index_keys)
-        for key, mix in self.mix:
-            ref = self._make_ref(key)
-            if ref is not None:
-                eg = dict()
-                eg["mix"] = mix.astype(np.float32)
-                eg["ref"] = [r.astype(np.float32) for r in ref]
-                yield eg
+    def __getitem__(self, index):
+        key = self.mix.index_keys[index]
+        mix = self.mix[key]
+        ref = [reader[key] for reader in self.ref]
+        return {
+            "mix": mix.astype(np.float32),
+            "ref": [r.astype(np.float32) for r in ref]
+        }
 
 
 class ChunkSplitter(object):
     """
     Split utterance into small chunks
     """
-
     def __init__(self, chunk_size, train=True, least=16000):
         self.chunk_size = chunk_size
         self.least = least
@@ -105,56 +97,51 @@ class DataLoader(object):
     """
     Online dataloader for chunk-level PIT
     """
-
     def __init__(self,
-                 perutt_loader,
+                 dataset,
+                 num_workers=4,
                  chunk_size=32000,
                  batch_size=16,
-                 cache_size=16,
                  train=True):
-        self.loader = perutt_loader
-        self.cache_size = cache_size * batch_size
         self.batch_size = batch_size
-        self.splitter = ChunkSplitter(
-            chunk_size, train=train, least=chunk_size // 2)
+        self.train = train
+        self.splitter = ChunkSplitter(chunk_size,
+                                      train=train,
+                                      least=chunk_size // 2)
+        # just return batch of egs, support multiple workers
+        self.eg_loader = dat.DataLoader(dataset,
+                                        batch_size=batch_size // 2,
+                                        num_workers=num_workers,
+                                        shuffle=train,
+                                        collate_fn=self._collate)
 
-    def _fetch_batch(self):
-        while True:
-            if len(self.load_list) >= self.cache_size:
-                break
-            try:
-                eg = next(self.load_iter)
-                cs = self.splitter.split(eg)
-                self.load_list.extend(cs)
-            except StopIteration:
-                self.stop_iter = True
-                break
-        random.shuffle(self.load_list)
-        N = len(self.load_list)
+    def _collate(self, batch):
+        """
+        Online split utterances
+        """
+        chunk = []
+        for eg in batch:
+            chunk += self.splitter.split(eg)
+        return chunk
+
+    def _merge(self, chunk_list):
+        """
+        Merge chunk list into mini-batch
+        """
+        N = len(chunk_list)
+        if self.train:
+            random.shuffle(chunk_list)
         blist = []
         for s in range(0, N - self.batch_size + 1, self.batch_size):
-            batch = default_collate(self.load_list[s:s + self.batch_size])
+            batch = default_collate(chunk_list[s:s + self.batch_size])
             blist.append(batch)
-        # update load_list
         rn = N % self.batch_size
-        if rn:
-            # add last batch
-            if self.stop_iter and rn >= 4:
-                last = default_collate(self.load_list[-rn:])
-                blist.append(last)
-            else:
-                self.load_list = self.load_list[-rn:]
-        else:
-            self.load_list = []
-        return blist
+        return blist, chunk_list[-rn:] if rn else []
 
     def __iter__(self):
-        # reset flags
-        self.load_iter = iter(self.loader)
-        self.stop_iter = False
-        self.load_list = []
-
-        while not self.stop_iter:
-            bs = self._fetch_batch()
-            for obj in bs:
+        chunk_list = []
+        for chunks in self.eg_loader:
+            chunk_list += chunks
+            batch, chunk_list = self._merge(chunk_list)
+            for obj in batch:
                 yield obj
