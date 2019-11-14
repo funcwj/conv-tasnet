@@ -15,7 +15,7 @@ def make_dataloader(train=True,
                     num_workers=4,
                     chunk_size=32000,
                     batch_size=16):
-    dataset = Dataset(shuffle=train, **data_kwargs)
+    dataset = Dataset(**data_kwargs)
     return DataLoader(dataset,
                       train=train,
                       chunk_size=chunk_size,

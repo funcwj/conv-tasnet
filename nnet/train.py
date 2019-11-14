@@ -39,12 +39,12 @@ def run(args):
     train_loader = make_dataloader(train=True,
                                    data_kwargs=train_data,
                                    batch_size=args.batch_size,
-                                   chunk_size=args.chunk_size,
+                                   chunk_size=chunk_size,
                                    num_workers=args.num_workers)
     dev_loader = make_dataloader(train=False,
                                  data_kwargs=dev_data,
                                  batch_size=args.batch_size,
-                                 chunk_size=args.chunk_size,
+                                 chunk_size=chunk_size,
                                  num_workers=args.num_workers)
 
     trainer.run(train_loader, dev_loader, num_epochs=args.epochs)
